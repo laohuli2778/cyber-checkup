@@ -35,8 +35,18 @@
       text-rendering:optimizeLegibility;
       overflow-x:hidden;
     }
-    .cx-app{min-height:100%; display:flex; align-items:stretch; justify-content:center; padding:20px 14px calc(24px + env(safe-area-inset-bottom));}
-    .cx-shell{width:100%; max-width:420px; display:flex; flex-direction:column; gap:14px;}
+    .cx-app{min-height:100%; min-height:100svh; min-height:100dvh; display:flex; align-items:stretch; justify-content:center; padding:20px 14px calc(24px + env(safe-area-inset-bottom));}
+    .cx-shell{width:100%; max-width:420px; display:flex; flex-direction:column; gap:14px; justify-content:flex-start;}
+    @supports (height: 100dvh){
+      .cx-shell{min-height:calc(100dvh - 44px - env(safe-area-inset-bottom));}
+    }
+    @supports not (height: 100dvh){
+      .cx-shell{min-height:calc(100vh - 44px - env(safe-area-inset-bottom));}
+    }
+    html[data-step="welcome"] .cx-shell,
+    html[data-step="quiz"] .cx-shell{justify-content:center;}
+    html[data-step="welcome"] .cx-app,
+    html[data-step="quiz"] .cx-app{padding-top:0;}
 
     .cx-view{opacity:0; transform:translateY(10px); pointer-events:none; position:absolute; inset:0;}
     .cx-view.cx-active{opacity:1; transform:translateY(0); pointer-events:auto; position:relative;}
@@ -157,7 +167,14 @@
     .cx-levelHint{color:var(--muted); margin-top:6px; line-height:1.6}
 
     .cx-chartWrap{height:280px; position:relative}
-    canvas{max-width:100%}
+    canvas{max-width:100%; display:block}
+    #radarCanvas{width:100%; height:100%}
+    .cx-radarAlt{display:none; margin-top:10px}
+    .cx-radarAltItem{display:flex; align-items:center; gap:10px; margin:10px 0}
+    .cx-radarAltLabel{width:92px; flex:0 0 auto; font-family:var(--mono); color:rgba(237,237,237,.85); font-size:12px; letter-spacing:.02em}
+    .cx-radarAltBar{flex:1; height:10px; border-radius:999px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.08); overflow:hidden}
+    .cx-radarAltFill{height:100%; width:0%; background:linear-gradient(90deg, rgba(0,255,65,.35), rgba(0,255,65,1)); box-shadow:0 0 18px rgba(0,255,65,.25)}
+    .cx-radarAltVal{width:42px; flex:0 0 auto; text-align:right; font-family:var(--mono); color:rgba(163,163,163,.9); font-size:12px}
 
     .cx-prescTitle{font-family:var(--mono); letter-spacing:.05em; margin:0 0 10px}
     .cx-prescList{margin:0; padding-left:16px; color:var(--text)}
@@ -305,6 +322,8 @@
             <div class="cx-chartWrap" style="margin-top:12px;">
               <canvas id="radarCanvas" role="img" aria-label="五维雷达图"></canvas>
             </div>
+            <div class="cx-radarAlt" id="radarAlt" aria-hidden="true"></div>
+            <div class="cx-small" id="radarFallback" style="display:none; margin-top:10px;">雷达图暂不可用：请检查网络后重试。</div>
             <div class="cx-small" style="margin-top:10px;">注：数据来自系统对你“日常崩溃频率”的合理臆测。</div>
           </div>
 
@@ -332,7 +351,7 @@
           </div>
 
           <div class="cx-card">
-            <div class="cx-warn">截图保存此病历，前往小红书推荐原帖下面（作者@神？秘星人），私信发送暗号【退堂鼓】，就可以领取 《高情商防甩锅话术库。pdf》和「赛博发疯/离线状态」物料包，以及《2026 旷野回血指南》。 </div>
+            <div class="cx-warn">截图保存此病历，前往小红书推荐原帖下面（作者@神？秘星人），私信发送暗号【退堂鼓】，就可以领取 《高情商防甩锅话术库。pdf》和「赛博发疯/离线状态」物料包，以及《2026 旷野回血指南》。</div>
             <div class="cx-actions">
               <button class="cx-btn" id="btnShot" type="button">保存赛博病历图到本地</button>
               <button class="cx-btn cx-ghost" id="btnRestart" type="button">重新体检</button>
@@ -669,7 +688,7 @@
 
       function shuffle(arr){
         const a = Array.isArray(arr) ? arr.slice() : [];
-        for (let i = a.length - 1; i > 0; i -= 1){
+        for (let i = a.length - 1; i > 0; i--){
           const j = Math.floor(Math.random() * (i + 1));
           [a[i], a[j]] = [a[j], a[i]];
         }
@@ -686,19 +705,6 @@
         loading: el("viewLoading"),
         result: el("viewResult")
       };
-
-      const scoreBounds = (() => {
-        let min = 0;
-        let max = 0;
-        for (const q of questions){
-          const scores = (q && Array.isArray(q.options)) ? q.options.map((o) => Number(o.score)).filter((n) => Number.isFinite(n)) : [];
-          if (scores.length === 0) continue;
-          min += Math.min(...scores);
-          max += Math.max(...scores);
-        }
-        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return { min: 25, max: 100 };
-        return { min, max };
-      })();
 
       const state = {
         step: "welcome",
@@ -717,6 +723,7 @@
 
       let chartInstance = null;
       let lastShotObjectUrl = null;
+      const radarLabels = ["摸鱼功力","甩锅抗性","情绪死感","画饼免疫","发疯指数"];
 
       function cleanup(){
         if (timers.toast) clearTimeout(timers.toast);
@@ -755,15 +762,20 @@
           const active = k === name;
           node.classList.toggle("cx-active", active);
           node.setAttribute("aria-hidden", active ? "false" : "true");
+          node.style.opacity = "";
+          node.style.transform = "";
         });
         state.step = name;
+        document.documentElement.dataset.step = name;
       }
 
       function cleanupTransientOnly(){
+        if (timers.toast) clearTimeout(timers.toast);
         if (timers.loadingInterval) clearInterval(timers.loadingInterval);
         if (timers.loadingTimeout) clearTimeout(timers.loadingTimeout);
         if (timers.transition1) clearTimeout(timers.transition1);
         if (timers.transition2) clearTimeout(timers.transition2);
+        timers.toast = null;
         timers.loadingInterval = null;
         timers.loadingTimeout = null;
         timers.transition1 = null;
@@ -781,8 +793,9 @@
         return Math.max(min, Math.min(max, n));
       }
 
-      function percentFromScore(score, bounds = scoreBounds){
+      function percentFromScore(score, bounds = { min: 25, max: 100 }){
         const denom = bounds.max - bounds.min;
+        if (!Number.isFinite(denom) || denom <= 0) return 0;
         const p = Math.round(((score - bounds.min) / denom) * 100);
         return clamp(p, 0, 100);
       }
@@ -920,7 +933,8 @@
 
         Array.from(el("options").children).forEach((n) => n.classList.add("cx-disabled"));
         btn.classList.add("cx-picked");
-        state.totalScore += score;
+        const numericScore = clamp(Number(score), 1, 4);
+        state.totalScore += numericScore;
 
         timers.transition1 = setTimeout(() => {
           const panel = views.quiz;
@@ -965,46 +979,99 @@
         timers.loadingTimeout = setTimeout(() => {
           if (timers.loadingInterval) clearInterval(timers.loadingInterval);
           timers.loadingInterval = null;
-          renderResult();
           setView("result");
+          setTimeout(renderResult, 0);
         }, 2500);
       }
 
-      function renderResult(){
-        const rawScore = state.totalScore;
-        const avg = rawScore / questions.length;
-        const standardScore = clamp(Math.round(25 + ((avg - 1) / 3) * 75), 25, 100);
-        const percent = percentFromScore(standardScore, { min: 25, max: 100 });
-        const level = getLevel(standardScore);
-        const presc = getPrescription(standardScore);
+      function renderRadarAlt(data){
+        const root = el("radarAlt");
+        if (!root || !(root instanceof HTMLElement)) return;
+        root.innerHTML = "";
+        const frag = document.createDocumentFragment();
+        radarLabels.forEach((label, i) => {
+          const raw = Number(data?.[i]);
+          const v = Number.isFinite(raw) ? clamp(raw, 0, 100) : 0;
 
-        el("kpiPercent").textContent = `${percent}%`;
-        el("kpiScore").textContent = `${rawScore}`;
-        el("levelText").textContent = level.title;
-        el("levelHint").textContent = level.hint;
+          const row = document.createElement("div");
+          row.className = "cx-radarAltItem";
 
-        el("prescTitle").textContent = `处方单 / ${presc.title}`;
-        const list = el("prescList");
-        list.innerHTML = "";
-        presc.items.forEach((t) => {
-          const li = document.createElement("li");
-          li.textContent = t;
-          list.appendChild(li);
+          const lab = document.createElement("div");
+          lab.className = "cx-radarAltLabel";
+          lab.textContent = label;
+
+          const bar = document.createElement("div");
+          bar.className = "cx-radarAltBar";
+
+          const fill = document.createElement("div");
+          fill.className = "cx-radarAltFill";
+          fill.style.width = `${v}%`;
+          bar.appendChild(fill);
+
+          const val = document.createElement("div");
+          val.className = "cx-radarAltVal";
+          val.textContent = String(v);
+
+          row.appendChild(lab);
+          row.appendChild(bar);
+          row.appendChild(val);
+          frag.appendChild(row);
         });
+        root.appendChild(frag);
+        root.style.display = "block";
+        root.setAttribute("aria-hidden", "false");
+      }
 
-        renderSurvivalGuide(standardScore);
+      function hideRadarAlt(){
+        const root = el("radarAlt");
+        if (!root || !(root instanceof HTMLElement)) return;
+        root.style.display = "none";
+        root.setAttribute("aria-hidden", "true");
+      }
 
-        console.log("【体检】生成结果", { rawScore, standardScore, percent, level: level.title });
+      function renderRadarChart(data, attempt = 0){
+        if (state.step !== "result") return;
+        const fb = el("radarFallback");
+        if (fb) fb.style.display = "none";
 
-        const data = genRadar(standardScore);
+        if (!window.Chart || typeof ResizeObserver === "undefined"){
+          if (fb) fb.style.display = "block";
+          console.log("【体检】雷达图切换兼容模式", { hasChart: !!window.Chart, hasResizeObserver: typeof ResizeObserver !== "undefined" });
+          renderRadarAlt(data);
+          showToast("雷达图不可用：已切换为兼容模式");
+          return;
+        }
+
+        const canvas = el("radarCanvas");
+        if (!canvas){
+          if (fb) fb.style.display = "block";
+          renderRadarAlt(data);
+          return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width < 64 || rect.height < 64){
+          if (attempt < 12){
+            requestAnimationFrame(() => renderRadarChart(data, attempt + 1));
+            return;
+          }
+          if (fb) fb.style.display = "block";
+          console.log("【体检】雷达图容器尺寸异常，切换兼容模式", { width: rect.width, height: rect.height });
+          renderRadarAlt(data);
+          showToast("雷达图不可用：已切换为兼容模式");
+          return;
+        }
+
         try{
-          if (!window.Chart) throw new Error("Chart.js not loaded");
-          const ctx = el("radarCanvas");
-          if (chartInstance) chartInstance.destroy();
-          chartInstance = new Chart(ctx, {
+          if (chartInstance) {
+            try{ chartInstance.destroy(); }catch(e){ console.log("【体检】销毁雷达图失败", e); }
+            chartInstance = null;
+          }
+          hideRadarAlt();
+          chartInstance = new Chart(canvas, {
             type: "radar",
             data: {
-              labels: ["摸鱼功力","甩锅抗性","情绪死感","画饼免疫","发疯指数"],
+              labels: radarLabels,
               datasets: [{
                 label: "Cyber Index",
                 data,
@@ -1020,6 +1087,7 @@
             options: {
               responsive: true,
               maintainAspectRatio: false,
+              animation: false,
               plugins: {
                 legend: {
                   labels: { color: "rgba(237,237,237,.85)", font: { family: "monospace" } }
@@ -1037,10 +1105,55 @@
               }
             }
           });
+          requestAnimationFrame(() => { try{ chartInstance.resize(); }catch(e){ console.log("【体检】雷达图 resize 失败", e); } });
         }catch(e){
           console.log("【体检】雷达图渲染失败", e);
-          showToast("雷达图加载失败：请检查网络/CDN");
+          if (fb) fb.style.display = "block";
+          renderRadarAlt(data);
+          showToast("雷达图渲染失败：已切换为兼容模式");
         }
+      }
+
+      function renderResult(){
+        if (!Array.isArray(questions) || questions.length <= 0){
+          console.log("【体检】题库不可用，无法生成结果", { questions: Array.isArray(questions) ? questions.length : null });
+          showToast("题库异常：请刷新重试");
+          return;
+        }
+        const rawScore = state.totalScore;
+        const avg = rawScore / questions.length;
+        const standardScore = clamp(Math.round(25 + ((avg - 1) / 3) * 75), 25, 100);
+        const percent = percentFromScore(standardScore, { min: 25, max: 100 });
+        const level = getLevel(standardScore);
+        const presc = getPrescription(standardScore);
+        const radarData = genRadar(standardScore);
+
+        const kpiPercent = el("kpiPercent");
+        const kpiScore = el("kpiScore");
+        const levelText = el("levelText");
+        const levelHint = el("levelHint");
+        if (kpiPercent) kpiPercent.textContent = `${percent}%`;
+        if (kpiScore) kpiScore.textContent = `${rawScore}`;
+        if (levelText) levelText.textContent = level.title;
+        if (levelHint) levelHint.textContent = level.hint;
+
+        const prescTitle = el("prescTitle");
+        if (prescTitle) prescTitle.textContent = `处方单 / ${presc.title}`;
+        const list = el("prescList");
+        if (!list) return;
+        list.innerHTML = "";
+        const frag = document.createDocumentFragment();
+        presc.items.forEach((t) => {
+          const li = document.createElement("li");
+          li.textContent = t;
+          frag.appendChild(li);
+        });
+        list.appendChild(frag);
+
+        renderSurvivalGuide(standardScore);
+
+        console.log("【体检】生成结果", { rawScore, standardScore, percent, level: level.title });
+        requestAnimationFrame(() => renderRadarChart(radarData));
       }
 
       function yieldUI(){
@@ -1088,9 +1201,10 @@
           if (!window.html2canvas) throw new Error("html2canvas not loaded");
           await yieldUI();
           const node = el("captureArea");
+          const baseScale = isMobileUA() ? 1.2 : 1.5;
           const canvas = await html2canvas(node, {
             backgroundColor: "#121212",
-            scale: Math.min(1.5, window.devicePixelRatio || 1.5),
+            scale: Math.min(baseScale, window.devicePixelRatio || baseScale),
             useCORS: true,
             logging: false
           });
@@ -1175,6 +1289,15 @@
       }
 
       function init(){
+        window.addEventListener("error", (e) => {
+          console.log("【体检】运行时错误", e?.message || e);
+          showToast("发生错误：请刷新重试");
+        });
+        window.addEventListener("unhandledrejection", (e) => {
+          console.log("【体检】Promise 未捕获错误", e?.reason || e);
+          showToast("发生错误：请刷新重试");
+        });
+
         el("btnStart").addEventListener("click", start);
         el("btnShot").addEventListener("click", makeShot);
         el("btnRestart").addEventListener("click", restart);
@@ -1187,6 +1310,7 @@
         });
 
         console.log("【体检】初始化完成", { questions: questions.length });
+        document.documentElement.dataset.step = state.step;
 
         if (questions.length !== 50){
           console.log("【体检】题库数量异常", { questions: questions.length });
