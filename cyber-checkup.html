@@ -163,7 +163,29 @@
     .cx-kpiLabel{font-family:var(--mono); color:var(--muted); letter-spacing:.08em; font-size:12px}
     .cx-kpiValue{font-family:var(--mono); font-size:26px; margin-top:6px}
 
-    .cx-level{font-family:var(--mono); font-size:18px; margin-top:10px;}
+    .cx-level{margin-top:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:baseline}
+    .cx-levelBadge{
+      display:inline-flex;
+      align-items:center;
+      padding:3px 10px;
+      border-radius:999px;
+      border:1px solid rgba(0,255,65,.45);
+      background:rgba(0,255,65,.10);
+      color:rgba(0,255,65,.95);
+      font-family:var(--mono);
+      font-size:12px;
+      letter-spacing:.10em;
+      text-transform:uppercase;
+    }
+    .cx-levelValue{
+      font-family:var(--mono);
+      font-size:24px;
+      font-weight:800;
+      letter-spacing:.02em;
+      line-height:1.15;
+      color:rgba(237,237,237,.95);
+      text-shadow:0 0 18px rgba(0,255,65,.10);
+    }
     .cx-levelHint{color:var(--muted); margin-top:6px; line-height:1.6}
 
     .cx-chartWrap{height:280px; position:relative}
@@ -175,6 +197,10 @@
     .cx-radarAltBar{flex:1; height:10px; border-radius:999px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.08); overflow:hidden}
     .cx-radarAltFill{height:100%; width:0%; background:linear-gradient(90deg, rgba(0,255,65,.35), rgba(0,255,65,1)); box-shadow:0 0 18px rgba(0,255,65,.25)}
     .cx-radarAltVal{width:42px; flex:0 0 auto; text-align:right; font-family:var(--mono); color:rgba(163,163,163,.9); font-size:12px}
+    #radarFallback{display:none !important}
+    html[data-radar="alt"] .cx-chartWrap{display:none}
+    html[data-radar="alt"] #radarAlt{display:block}
+    html[data-radar="chart"] #radarAlt{display:none}
 
     .cx-prescTitle{font-family:var(--mono); letter-spacing:.05em; margin:0 0 10px}
     .cx-prescList{margin:0; padding-left:16px; color:var(--text)}
@@ -312,7 +338,10 @@
                 <div class="cx-kpiValue" id="kpiScore">--</div>
               </div>
             </div>
-            <div class="cx-level" id="levelText">--</div>
+            <div class="cx-level" id="levelText">
+              <span class="cx-levelBadge">测试结果</span>
+              <span class="cx-levelValue" id="levelValue">--</span>
+            </div>
             <div class="cx-levelHint" id="levelHint">--</div>
           </div>
 
@@ -725,6 +754,10 @@
       let lastShotObjectUrl = null;
       const radarLabels = ["摸鱼功力","甩锅抗性","情绪死感","画饼免疫","发疯指数"];
 
+      function setRadarMode(mode){
+        document.documentElement.dataset.radar = mode;
+      }
+
       function cleanup(){
         if (timers.toast) clearTimeout(timers.toast);
         if (timers.loadingInterval) clearInterval(timers.loadingInterval);
@@ -987,6 +1020,7 @@
       function renderRadarAlt(data){
         const root = el("radarAlt");
         if (!root || !(root instanceof HTMLElement)) return;
+        setRadarMode("alt");
         root.innerHTML = "";
         const frag = document.createDocumentFragment();
         radarLabels.forEach((label, i) => {
@@ -1018,7 +1052,6 @@
           frag.appendChild(row);
         });
         root.appendChild(frag);
-        root.style.display = "block";
         root.setAttribute("aria-hidden", "false");
       }
 
@@ -1035,16 +1068,13 @@
         if (fb) fb.style.display = "none";
 
         if (!window.Chart || typeof ResizeObserver === "undefined"){
-          if (fb) fb.style.display = "block";
           console.log("【体检】雷达图切换兼容模式", { hasChart: !!window.Chart, hasResizeObserver: typeof ResizeObserver !== "undefined" });
           renderRadarAlt(data);
-          showToast("雷达图不可用：已切换为兼容模式");
           return;
         }
 
         const canvas = el("radarCanvas");
         if (!canvas){
-          if (fb) fb.style.display = "block";
           renderRadarAlt(data);
           return;
         }
@@ -1055,10 +1085,8 @@
             requestAnimationFrame(() => renderRadarChart(data, attempt + 1));
             return;
           }
-          if (fb) fb.style.display = "block";
           console.log("【体检】雷达图容器尺寸异常，切换兼容模式", { width: rect.width, height: rect.height });
           renderRadarAlt(data);
-          showToast("雷达图不可用：已切换为兼容模式");
           return;
         }
 
@@ -1105,12 +1133,11 @@
               }
             }
           });
+          setRadarMode("chart");
           requestAnimationFrame(() => { try{ chartInstance.resize(); }catch(e){ console.log("【体检】雷达图 resize 失败", e); } });
         }catch(e){
           console.log("【体检】雷达图渲染失败", e);
-          if (fb) fb.style.display = "block";
           renderRadarAlt(data);
-          showToast("雷达图渲染失败：已切换为兼容模式");
         }
       }
 
@@ -1131,10 +1158,12 @@
         const kpiPercent = el("kpiPercent");
         const kpiScore = el("kpiScore");
         const levelText = el("levelText");
+        const levelValue = el("levelValue");
         const levelHint = el("levelHint");
         if (kpiPercent) kpiPercent.textContent = `${percent}%`;
         if (kpiScore) kpiScore.textContent = `${rawScore}`;
-        if (levelText) levelText.textContent = level.title;
+        if (levelValue) levelValue.textContent = level.title;
+        else if (levelText) levelText.textContent = `测试结果 ${level.title}`;
         if (levelHint) levelHint.textContent = level.hint;
 
         const prescTitle = el("prescTitle");
@@ -1311,6 +1340,7 @@
 
         console.log("【体检】初始化完成", { questions: questions.length });
         document.documentElement.dataset.step = state.step;
+        setRadarMode("chart");
 
         if (questions.length !== 50){
           console.log("【体检】题库数量异常", { questions: questions.length });
